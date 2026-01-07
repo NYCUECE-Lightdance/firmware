@@ -134,7 +134,7 @@ void showMessage(String message, int textSize = 2) {
 
 int calculateBrightness(unsigned int data) {
     // Extract brightness from bits 2-7 (skipping the 2 flag bits)
-    int brightnessValue = (data >> 2) & 0x3F;  // 6 bits: 0-63 range
+    int brightnessValue = (data >> 1) & 0x3F;  // 6 bits: 0-63 range
     return pow(1.74, brightnessValue / 2.5);
 }
 
@@ -262,33 +262,27 @@ void loadDataFromMemory() {
 
 uint32_t ColorGradient(float startTime, float endTime, uint32_t currentColor, uint32_t nextColor, float currentTime, bool direction) {
     float progress = (currentTime - startTime) / (endTime - startTime);
-    progress = min(max(progress, 0.0f), 1.0f);
-    
-    // Convert uint32_t to CRGB
-    CRGB currentCRGB((currentColor >> 16) & 0xFF, (currentColor >> 8) & 0xFF, currentColor & 0xFF);
-    CRGB nextCRGB((nextColor >> 16) & 0xFF, (nextColor >> 8) & 0xFF, nextColor & 0xFF);
-    
-    CHSV hsvStart = rgb2hsv_approximate(currentCRGB);
-    CHSV hsvEnd = rgb2hsv_approximate(nextCRGB);
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
 
-    int16_t dh = hsvEnd.h - hsvStart.h;
-    if (direction) {
-        dh %= 256;
-    } else {
-        dh %= 256;
-        dh -= 256;
-    }
+    CRGB c1(
+        (currentColor >> 16) & 0xFF,
+        (currentColor >> 8)  & 0xFF,
+        currentColor & 0xFF
+    );
 
-    uint8_t h = hsvStart.h + (int16_t)(progress * dh);
-    uint8_t s = hsvStart.s;
-    uint8_t v = hsvStart.v;
+    CRGB c2(
+        (nextColor >> 16) & 0xFF,
+        (nextColor >> 8)  & 0xFF,
+        nextColor & 0xFF
+    );
 
-    CHSV hsvInterp(h, s, v);
-    
-    CRGB result;
-    hsv2rgb_rainbow(hsvInterp, result);
-    
-    return ((uint32_t)result.r << 16) | ((uint32_t)result.g << 8) | result.b;
+    uint8_t amount = (uint8_t)(progress * 255.0f);
+    CRGB result = blend(c1, c2, amount);
+
+    return ((uint32_t)result.r << 16) |
+           ((uint32_t)result.g << 8)  |
+            (uint32_t)result.b;
 }
 
 void updateLEDs() {
@@ -301,9 +295,11 @@ void updateLEDs() {
 
     unsigned int bodyPartData = frameData[currentFrameIndex][section.bodyPartIndex];
     
-    // Extract flags from last 2 bits
-    bool shouldTransition = (bodyPartData >> 1) & 0x01;        // Bit 1: transition flag
-    int transitionDirection = bodyPartData & 0x01;             // Bit 0: direction (0 or 1)
+    // // Extract flags from last 2 bits
+    // bool shouldTransition = (bodyPartData >> 1) & 0x01;        // Bit 1: transition flag
+    // int transitionDirection = bodyPartData & 0x01;             // Bit 0: direction (0 or 1)
+
+    int shouldTransition = bodyPartData & 0x01; 
     
     uint32_t currentColor = bodyPartData >> 8;          // Extract color (upper 24 bits)
     int brightness = calculateBrightness(bodyPartData); // May need adjustment if brightness uses lower bits
