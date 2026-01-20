@@ -77,7 +77,7 @@ const LEDSection LED_SECTIONS[] = {
     {4, 2, 1, 13},       // shoeL
     {5, 0, 2, 12},       // legR
     {5, 2, 1, 14},       // shoeR
-    {6, 0, 1, 8},       // belt
+    {6, 0, 2, 8},       // belt
     {7, 0, 1, 15},       // board
 };
 
@@ -89,7 +89,7 @@ WiFiUDP udp;
 EasyButton button(BUTTON_PIN, 100, true);
 
 // LED Arrays
-CRGB led1[6], led2[8], led3[8], led4[1], led5[3], led6[3], led7[1], led8[1];
+CRGB led1[6], led2[8], led3[8], led4[1], led5[3], led6[3], led7[2], led8[1];
 CRGB* ledArrays[] = {led1, led2, led3, led4, led5, led6, led7, led8};
 
 // Frame data storage
@@ -133,9 +133,8 @@ void showMessage(String message, int textSize = 2) {
 }
 
 int calculateBrightness(unsigned int data) {
-    // Extract brightness from bits 2-7 (skipping the 2 flag bits)
-    int brightnessValue = (data >> 1) & 0x3F;  // 6 bits: 0-63 range
-    return pow(1.74, brightnessValue / 2.5);
+    int brightnessValue = (data >> 4) & 0x0F;  // 0-15
+    return pow(brightnessValue / 15.0, 2.2) * 255;
 }
 
 // ============================================================================
@@ -174,7 +173,7 @@ void connectWiFi(int wifiProfile) {
 }
 
 bool downloadChunk(int chunkNumber) {
-    String apiUrl = "https://eesa.dece.nycu.edu.tw/lightdance/api/items/back_test/LATEST/player=" + String(PLAYER_NUM) + "/chunk=" + String(chunkNumber);
+    String apiUrl = "https://eesa.dece.nycu.edu.tw/lightdance/api/items/funding/LATEST/player=" + String(PLAYER_NUM) + "/chunk=" + String(chunkNumber);
     WiFiClientSecure client;
     client.setInsecure();  // Skip SSL certificate verification
     Serial.print("Downloading from: ");
@@ -260,7 +259,7 @@ void loadDataFromMemory() {
 // LED CONTROL
 // ============================================================================
 
-uint32_t ColorGradient(float startTime, float endTime, uint32_t currentColor, uint32_t nextColor, float currentTime, bool direction) {
+uint32_t ColorGradient(float startTime, float endTime, uint32_t currentColor, uint32_t nextColor, float currentTime) {
     float progress = (currentTime - startTime) / (endTime - startTime);
     if (progress < 0.0f) progress = 0.0f;
     if (progress > 1.0f) progress = 1.0f;
@@ -311,6 +310,10 @@ void updateLEDs() {
       // Get next frame's color
       unsigned int nextBodyPartData = frameData[currentFrameIndex + 1][section.bodyPartIndex];
       uint32_t nextColor = nextBodyPartData >> 8;
+      Serial.print("framedata: ");
+      Serial.println(nextBodyPartData);
+      Serial.print("next color: ");
+      Serial.println(nextColor);
       
       // Get frame times in milliseconds
       unsigned long startTime = frameData[currentFrameIndex][0] * 50;
@@ -318,12 +321,12 @@ void updateLEDs() {
       unsigned long currentTime = millis() - playbackStartTime;
       
       // Calculate transition color using per-body-part direction
-      finalColor = ColorGradient(startTime, endTime, currentColor, nextColor, currentTime, transitionDirection);
+      finalColor = ColorGradient(startTime, endTime, currentColor, nextColor, currentTime);
     }
-    Serial.print("color: ");
-    Serial.println(finalColor);
-    Serial.print("brghtness: ");
-    Serial.println(brightness);
+    // Serial.print("color: ");
+    // Serial.println(finalColor);
+    // Serial.print("brghtness: ");
+    // Serial.println(brightness);
     // Set all LEDs in this section
     for (int ledIndex = 0; ledIndex < section.ledCount; ledIndex++) {
       int position = section.startPosition + ledIndex;
@@ -372,6 +375,15 @@ void runDebugMode() {
     while (1) {
         Serial.println("Debugging");
         FastLED.show();
+        
+        // Print hat color (led1[5])
+        Serial.print("Hat - R: ");
+        Serial.print(led1[5].r);
+        Serial.print(" G: ");
+        Serial.print(led1[5].g);
+        Serial.print(" B: ");
+        Serial.println(led1[5].b);
+        
         delay(1000);
     }
 }
@@ -454,12 +466,7 @@ void setup() {
     pinMode(SWITCH_PIN, INPUT_PULLUP);
     pinMode(WIFI_PIN, INPUT_PULLUP);
     
-    // Check for debug mode
-    if (!digitalRead(DEBUG_PIN)) {
-        showMessage("Debug Mode");
-        Serial.println("Debug Mode");
-        runDebugMode();  // Never returns
-    }
+    
     Serial.println(DEBUG_PIN);
     
     // Setup button
@@ -483,16 +490,31 @@ void setup() {
     FastLED.addLeds<NEOPIXEL, 5>(ledArrays[3], 1);
     FastLED.addLeds<NEOPIXEL, 6>(ledArrays[4], 3);
     FastLED.addLeds<NEOPIXEL, 7>(ledArrays[5], 3);
-    FastLED.addLeds<NEOPIXEL, 8>(ledArrays[6], 1);
+    FastLED.addLeds<NEOPIXEL, 8>(ledArrays[6], 2);
     FastLED.addLeds<NEOPIXEL, 9>(ledArrays[7], 1);
     FastLED.setBrightness(255);
     clearAllLEDs();
+
+    // Serial.println("Testing LEDs directly...");
+    // for(int i = 0; i < 6; i++) {
+    //     led1[i] = CRGB::Red;
+    // }
+    // FastLED.show();
+    // delay(2000);  // Should see red for 2 seconds
+    // Serial.println("Did you see red?");
     
     // Initialize filesystem
     if (!LittleFS.begin()) {
         Serial.println("Formatting filesystem...");
         LittleFS.format();
         LittleFS.begin();
+    }
+
+    // Check for debug mode
+    if (!digitalRead(DEBUG_PIN)) {
+        showMessage("Debug Mode");
+        Serial.println("Debug Mode");
+        runDebugMode();  // Never returns
     }
 
     // if (!initLocalData()) {
