@@ -88,10 +88,10 @@ runs on the internal broadcast LAN.
 
 ### 1. Fetch light data (needs internet)
 
-`lightdata.npz` is the per-player frame timeline used to preview the
-show in the UI. Download it once while you still have internet —
-`control3.py` will then load from this cache, no internet required at
-show time.
+Run **`fetch_lightdata.py`** to download the show data and cache it as
+`lightdata.npz` (the per-player frame timeline used to preview the show
+in the UI). Do this once while you still have internet — `control3.py`
+then loads from this cache, no internet required at show time.
 
 ```
 python fetch_lightdata.py                     # default user "eesa3", LATEST
@@ -100,7 +100,7 @@ python fetch_lightdata.py <user> <time>       # custom user + timestamp
 ```
 
 The `.npz` is written next to the script and picked up automatically.
-Re-run this whenever the show data changes.
+Re-run `fetch_lightdata.py` whenever the show data changes.
 
 ### 2. Download the music and update the path (needs internet)
 
