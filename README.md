@@ -140,38 +140,62 @@ seconds in the input box if you want to begin partway through the show.
 
 ---
 
-# Appendix — Editing the light SECTIONS table (props)
+# Appendix — Editing the light SECTIONS table
 
-Prop firmware (`main_props.cpp`) maps the 8 packed color slots in each
-frame (`acc0..acc7`) onto **physical LED strips**. Each prop unit has
-its own layout, so when you build a new prop or rewire an old one,
-you'll need to add or update its `SECTIONS` table.
+Both firmware files have a `SECTIONS` table that maps each frame's
+color columns onto **physical LED strips**. Edit it whenever you build
+a new unit, rewire an existing one, or change LED counts.
 
-### What the table means
+### What every row means
 
 ```c
-struct Section { uint8_t strip, start, count, slot; };
+struct Section { uint8_t strip, start, count, ...; };
 ```
 
 Each row says: paint `count` LEDs on `strip` starting at index `start`,
-using the color from `slot` (which is column `slot + 1` of the frame —
-column 0 is the timestamp).
+using the color from a frame column. The 4th field selects which
+column — it's named `part` for costumes and `slot` for props, but does
+the same job.
 
-- `strip`: which physical chain — `0 = PROP1 (GP2)`, `1 = PROP2 (GP3)`,
-  `2 = PROP3 (GP4)`.
+- `strip`: which physical chain (index into `strips[]`, which is GPIO
+  order from the `FastLED.addLeds<>` calls in `setup()`).
 - `start`: first LED index on that strip (0-based).
 - `count`: how many LEDs in this section.
-- `slot`: which `accN` slot drives them (`0..7`).
+- `part` / `slot`: which frame column drives them (column 0 is the
+  timestamp, so the actual column = this number + offset described
+  below).
 
-`STRIP_LENS[3]` is the LED count per strip. It must cover every
-section's `start + count` on that strip. Strips with length `0` are
-skipped at `FastLED.addLeds()` time.
+After editing, rebuild and re-flash that unit (Part A steps 3–5). The
+on-flash lightdata does **not** need to be re-downloaded unless the
+show data itself changed.
 
-### How it's wired up
+## Costumes — `main.cpp`
 
-`main_props.cpp` selects the table at compile time with
-`#if PLAYER_NUM == ...` blocks. To add a new player, add a new branch
-before `#else` and define both `SECTIONS[]` and `STRIP_LENS[3]`:
+Costume firmware shares a single `SECTIONS` table for all dancers
+(everyone wears the same suit). The 4th field is `part`, ranging 1..15
+across body parts (`1=hat`, `2=face`, `3=chestL`, …, `15=board`) — the
+order is fixed by `KEYS[]` in `main.cpp`.
+
+8 strips are wired to GPIO 2..9. The buffer size for each strip is set
+by the individual `CRGB l1[6], l2[12], …` declarations and **must
+match** the count passed to `FastLED.addLeds<NEOPIXEL, GPIO>(strips[i],
+count)` in `setup()`. Resize both together when LED counts change.
+
+To add a new body part: append a row to `SECTIONS` **and** add a name
+in `KEYS[]` at the matching index.
+
+## Props — `main_props.cpp`
+
+Each prop unit has its own layout, so the props firmware picks the
+table at compile time with `#if PLAYER_NUM == ...` blocks. The 4th
+field is `slot`, 0..7, mapping to `acc0..acc7` (frame column = `slot +
+1`). Three strips are wired to GP2..GP4, and `STRIP_LENS[3]` declares
+the LED count per strip — it must cover every section's `start + count`
+on that strip. Strips with length `0` are skipped at
+`FastLED.addLeds()` time.
+
+To add a new player, add a new branch before `#else` and define both
+`SECTIONS[]` and `STRIP_LENS[3]`:
 
 ```c
 #elif PLAYER_NUM == 6
@@ -190,16 +214,19 @@ Existing examples in `main_props.cpp`:
 - `PLAYER_NUM == 4 || 5` — blade (`acc0..1`), handle (`acc2..3`), hilt
   (`acc4`).
 
-### Constraints to watch
+Don't exceed `MAX_LEDS_PER_STRIP` (8 by default) — bump it in
+`main_props.cpp` if a new prop needs more LEDs per chain.
 
-- **No slot collisions on overlapping LEDs.** Two sections can share a
-  slot (mirroring the same color across LEDs is fine), but two
-  sections that paint the same physical LED with different slots will
-  fight each other.
-- **`STRIP_LENS[i]` must be ≥ the highest `start + count` on strip i**,
-  otherwise FastLED writes past the strip's buffer.
-- **Don't exceed `MAX_LEDS_PER_STRIP`** (8 by default). Bump it in
-  `main_props.cpp` if a new prop needs more LEDs per chain.
-- After editing the table, rebuild and re-flash that unit (Part A
-  steps 3–5). The on-flash lightdata does not need to be re-downloaded
-  unless the show data itself changed.
+## Constraints to watch (both)
+
+- **Buffer sizes must cover every section.** For costumes, the
+  `CRGB lN[...]` array on strip `i` must be ≥ the highest `start +
+  count` for that strip. For props, `STRIP_LENS[i]` must be ≥ the
+  highest `start + count` for that strip. Otherwise FastLED writes past
+  the buffer.
+- **No collisions on overlapping LEDs.** Two sections may share the
+  same `part`/`slot` (mirroring one color across LEDs is fine), but two
+  sections painting the same physical LED with **different**
+  parts/slots will fight each other.
+- **Strip indices must match the `addLeds<>` order in `setup()`** —
+  that's what defines which GPIO each `strip` value points at.
