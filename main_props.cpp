@@ -58,8 +58,8 @@
 #define UDP_HEARTBEAT  1751474546u
 #define HEARTBEAT_MS   3000
 
-const char* WIFI_SSID[]  = {"ASUS_A8", "Lightdance"}; //"EE219B"
-const char* WIFI_PASS    = "xiangjiao0717"; //"wifiyee219"
+const char* WIFI_SSID[]  = {"EE219B", "Lightdance"}; //"EE219B"
+const char* WIFI_PASS    = "wifiyee219"; //"wifiyee219"
 const char* RESPOND_TO[] = {"192.168.0.137", "192.168.1.10"};
 
 // Output -> acc-slot mapping. Each row paints `count` LEDs of strip `strip`,
