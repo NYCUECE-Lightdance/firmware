@@ -1,587 +1,323 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
-                                QHBoxLayout, QPushButton, QLabel, QLineEdit, 
-                                QScrollArea, QFrame)
-from PySide6.QtCore import Qt, QTimer
+"""Light Dance UI: dancer-figure grid with playback controls below.
+
+Exports:
+    MonitorWindow  - main window; expects (controller, players, time_provider)
+    PART_NAMES     - body part order, shared with the controller
+"""
+import re
+import time as time_module
+
+from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath,
+                            QPolygonF)
+from PySide6.QtWidgets import (QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+                                QMainWindow, QPushButton, QVBoxLayout, QWidget)
+
+# ---- theme ----
+BG       = "#111113"
+SURFACE  = "#1a1a1f"
+TEXT     = "#f0f0f2"
+DIM      = "#7a7a85"
+ACCENT   = "#22c55e"
+ACCENT_H = "#16a34a"
+DANGER   = "#ef4444"
+DANGER_H = "#dc2626"
+
+PART_NAMES = ["hat", "face", "chestL", "chestR", "armL", "armR", "tie",
+              "belt", "gloveL", "gloveR", "legL", "legR", "shoeL", "shoeR",
+              "board"]
+
+
+def parse_player_index(device_id):
+    """'player3' -> 3. Returns None on anything else."""
+    if not device_id:
+        return None
+    m = re.match(r"player(\d+)$", device_id.strip())
+    return int(m.group(1)) if m else None
+
 
 # ============================================================
-# THEME COLORS
+# DANCER WIDGET — paints one figure with per-part colors
 # ============================================================
-COLORS = {
-    "bg_primary": "#111113",
-    "bg_secondary": "#1a1a1f",
-    "bg_card": "#222228",
-    "border": "#2e2e35",
-    "text_primary": "#f0f0f2",
-    "text_secondary": "#7a7a85",
-    "accent": "#22c55e",
-    "accent_hover": "#16a34a",
-    "danger": "#ef4444",
-    "blue": "#3b82f6",
-}
+class DancerWidget(QWidget):
+    def __init__(self, index):
+        super().__init__()
+        self.index = index
+        self.colors = {n: (0, 0, 0) for n in PART_NAMES}
+        self.online = False
+        self.setFixedSize(170, 290)
 
-WIDTH, HEIGHT = 750, 700
+    def set_colors(self, colors):
+        self.colors = colors
+        self.update()
+
+    def set_online(self, online):
+        if online != self.online:
+            self.online = online
+            self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(SURFACE))
+
+        # online dot + label
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(ACCENT if self.online else DANGER)))
+        p.drawEllipse(QPointF(self.width() / 2 - 38, 12), 4, 4)
+
+        p.setPen(QColor(TEXT if self.online else DIM))
+        f = QFont()
+        f.setPointSize(8)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(0, 4, self.width(), 16, Qt.AlignCenter,
+                   f"Dancer {self.index + 1}")
+
+        # SVG-like figure (viewBox 10 0 222 360, group translate 0,35)
+        vb_x, vb_y, vb_w, vb_h = 10, 0, 222, 360
+        avail_h = self.height() - 22
+        s = min(self.width() / vb_w, avail_h / vb_h)
+        ox = (self.width() - vb_w * s) / 2 - vb_x * s
+        oy = 22 + (avail_h - vb_h * s) / 2 - vb_y * s
+        p.translate(ox, oy)
+        p.scale(s, s)
+        p.translate(0, 35)
+        p.setPen(Qt.NoPen)
+
+        def br(name):
+            r, g, b = self.colors[name]
+            return QBrush(QColor(r, g, b))
+
+        # hat
+        path = QPainterPath()
+        path.moveTo(96.8, 5)
+        path.lineTo(145.2, 5)
+        path.lineTo(145.2, 23)
+        path.lineTo(169.4, 23)
+        path.lineTo(169.4, 38)
+        path.lineTo(72.6, 38)
+        path.lineTo(72.6, 23)
+        path.lineTo(96.8, 23)
+        path.closeSubpath()
+        p.fillPath(path, br("hat"))
+
+        # face
+        p.setBrush(br("face"))
+        p.drawEllipse(QPointF(121, 68), 30, 30)
+
+        # body rectangles
+        for name, x, y, w, h in [
+            ("chestL",  72, 103, 28, 65),
+            ("chestR", 142, 103, 28, 65),
+            ("armL",    35, 103, 32, 65),
+            ("armR",   175, 103, 32, 65),
+            ("tie",    105, 103, 32, 50),
+            ("belt",    78, 173, 86, 35),
+            ("gloveL",  35, 173, 32, 35),
+            ("gloveR", 175, 173, 32, 35),
+            ("legL",    85, 213, 28, 80),
+            ("legR",   129, 213, 28, 80),
+            ("shoeL",   75, 298, 45, 15),
+            ("shoeR",  122, 298, 45, 15),
+        ]:
+            p.fillRect(x, y, w, h, br(name))
+
+        # tie tip
+        p.setBrush(br("tie"))
+        p.drawPolygon(QPolygonF([QPointF(105, 153),
+                                  QPointF(137, 153),
+                                  QPointF(121, 173)]))
 
 
 # ============================================================
 # MAIN WINDOW
 # ============================================================
-class DeviceMonitorWindow(QMainWindow):
-    def __init__(self, controller):
-        """
-        Args:
-            controller: Object with these attributes/methods:
-                - devices (dict)
-                - current_broadcast_message (str)
-                - broadcast_address (str)
-                - port (int)
-                - isRunning (bool)
-                - start_function(window)
-                - stop_function(window)
-                - exit_event
-                - setup_threads(window)
-                - broadcast_time()
-        """
+class MonitorWindow(QMainWindow):
+    def __init__(self, controller, players, time_provider):
         super().__init__()
         self.controller = controller
-        self.init_ui()
-        self.setup_timers()
-        
-        # Let controller setup threads with window reference
+        self.players = players
+        self.time_provider = time_provider
+        self.dancers = []
+
+        self._init_ui()
+        self._setup_timers()
         self.controller.setup_threads(self)
 
-    def init_ui(self):
+    def _init_ui(self):
         self.setWindowTitle("Light Dance Controller")
-        self.setGeometry(100, 100, WIDTH, HEIGHT)
-        self.setMinimumSize(600, 500)
-        
-        # Main stylesheet
         self.setStyleSheet(f"""
-            QMainWindow {{
-                background-color: {COLORS["bg_primary"]};
-            }}
-            QWidget {{
-                background-color: transparent;
-                color: {COLORS["text_primary"]};
-            }}
-            QLabel {{
-                border: none;
-                background: transparent;
-            }}
-            QScrollArea {{
-                border: none;
-                background-color: transparent;
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 8px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {COLORS["border"]};
-                border-radius: 4px;
-                min-height: 30px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
+            QMainWindow {{ background-color: {BG}; }}
+            QWidget    {{ background-color: transparent; color: {TEXT}; }}
+            QLabel     {{ border: none; background: transparent; }}
         """)
 
-        # Central widget
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(40, 30, 40, 30)
-        main_layout.setSpacing(20)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(16)
+        root.addSpacing(40)
 
-        # Header
-        header = QWidget()
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(4)
-        
-        title = QLabel("Light Dance Controller")
-        title.setStyleSheet(f"""
-            font-size: 24px;
-            font-weight: bold;
-            color: {COLORS["text_primary"]};
-            border: none;
-            background: transparent;
-        """)
-        header_layout.addWidget(title)
-        
-        subtitle = QLabel("Device Monitor & Sync")
-        subtitle.setStyleSheet(f"""
-            font-size: 14px;
-            color: {COLORS["text_secondary"]};
-            border: none;
-            background: transparent;
-        """)
-        header_layout.addWidget(subtitle)
-        main_layout.addWidget(header)
+        # dancer grid (or fallback message if no light data)
+        n = len(self.players) if self.players is not None else 0
+        if n == 0:
+            warn = QLabel("lightdata.npz not found.\n"
+                          "Run: python fetch_lightdata.py")
+            warn.setAlignment(Qt.AlignCenter)
+            warn.setStyleSheet(
+                f"font-size: 14px; color: {DANGER}; padding: 60px;")
+            root.addWidget(warn, stretch=1)
+        else:
+            grid_host = QWidget()
+            grid = QGridLayout(grid_host)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(8)
+            cols = 7 if n > 7 else max(n, 1)
+            for i in range(n):
+                w = DancerWidget(i)
+                self.dancers.append(w)
+                grid.addWidget(w, i // cols, i % cols)
+            root.addWidget(grid_host, stretch=1)
 
-        # Stats bar (including broadcast)
-        stats_bar = QWidget()
-        stats_layout = QHBoxLayout(stats_bar)
-        stats_layout.setContentsMargins(0, 0, 0, 0)
-        stats_layout.setSpacing(12)
+        root.addSpacing(80)
 
-        self.connected_label = self._create_stat_card("0", "Connected", COLORS["accent"])
-        self.disconnected_label = self._create_stat_card("0", "Disconnected", COLORS["danger"])
-        self.total_label = self._create_stat_card("0", "Total", COLORS["blue"])
-        self.broadcast_card = self._create_broadcast_card()
+        # bottom controls: [broadcast] ... [input] seconds [Start] [Exit]
+        controls = QWidget()
+        cl = QHBoxLayout(controls)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(10)
 
-        stats_layout.addWidget(self.connected_label)
-        stats_layout.addWidget(self.disconnected_label)
-        stats_layout.addWidget(self.total_label)
-        stats_layout.addWidget(self.broadcast_card)
-        main_layout.addWidget(stats_bar)
+        self.broadcast_label = QLabel("0")
+        self.broadcast_label.setStyleSheet(
+            f"font-family: 'Consolas', 'Monaco', monospace; "
+            f"font-size: 13px; color: {TEXT};")
+        cl.addWidget(self.broadcast_label)
 
-        # Device list
-        device_card = QFrame()
-        device_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS["bg_card"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 10px;
-            }}
-        """)
-        device_card_layout = QVBoxLayout(device_card)
-        device_card_layout.setContentsMargins(0, 0, 0, 0)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(350)  # Increased from 200 to 350
-        
-        scroll_widget = QWidget()
-        self.device_layout = QVBoxLayout(scroll_widget)
-        self.device_layout.setContentsMargins(0, 0, 0, 0)
-        self.device_layout.setSpacing(0)
-        self.device_layout.addStretch()
-        
-        scroll.setWidget(scroll_widget)
-        device_card_layout.addWidget(scroll)
-        main_layout.addWidget(device_card)
-
-        # Control panel
-        control_card = QFrame()
-        control_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS["bg_card"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 10px;
-            }}
-        """)
-        control_layout = QVBoxLayout(control_card)
-        control_layout.setContentsMargins(28, 28, 28, 28)
-        control_layout.setSpacing(20)
-
-        # Time header
-        time_header = QWidget()
-        time_header_layout = QHBoxLayout(time_header)
-        time_header_layout.setContentsMargins(0, 0, 0, 0)
-        
-        time_label = QLabel("Start Time")
-        time_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text_secondary']}; border: none; background: transparent;")
-        time_header_layout.addWidget(time_label)
-        
-        time_header_layout.addStretch()
-        control_layout.addWidget(time_header)
-
-        # Time input row
-        input_row = QWidget()
-        input_layout = QHBoxLayout(input_row)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(12)
+        cl.addStretch()
 
         self.time_input = QLineEdit("0")
-        self.time_input.setFixedWidth(120)
-        self.time_input.setMinimumHeight(56)
+        self.time_input.setFixedWidth(100)
+        self.time_input.setMinimumHeight(44)
         self.time_input.setAlignment(Qt.AlignCenter)
         self.time_input.setStyleSheet(f"""
             QLineEdit {{
-                background-color: {COLORS["bg_secondary"]};
-                border: none;
-                border-radius: 10px;
-                padding: 12px 16px;
+                background-color: {SURFACE};
+                border: none; border-radius: 8px;
+                padding: 8px 14px;
                 font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 18px;
-                color: {COLORS["text_primary"]};
-            }}
-            QLineEdit:focus {{
-                background-color: {COLORS["bg_card"]};
+                font-size: 16px; color: {TEXT};
             }}
         """)
-        self.time_input.editingFinished.connect(self.on_input_changed)
-        input_layout.addWidget(self.time_input)
-        
-        seconds_label = QLabel("seconds")
-        seconds_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text_secondary']}; border: none; background: transparent;")
-        input_layout.addWidget(seconds_label)
-        
-        input_layout.addStretch()
-        control_layout.addWidget(input_row)
+        self.time_input.editingFinished.connect(self._on_input_changed)
+        cl.addWidget(self.time_input)
 
-        # Button row
-        button_row = QWidget()
-        button_layout = QHBoxLayout(button_row)
-        button_layout.setContentsMargins(0, 12, 0, 0)
-        button_layout.setSpacing(12)
+        sec_label = QLabel("seconds")
+        sec_label.setStyleSheet(f"font-size: 13px; color: {DIM};")
+        cl.addWidget(sec_label)
 
         self.toggle_button = QPushButton("Start")
         self.toggle_button.setCursor(Qt.PointingHandCursor)
-        self.toggle_button.setMinimumHeight(60)
-        self.toggle_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS["accent"]};
-                color: white;
-                border: none;
-                border-radius: 10px;
-                padding: 16px 32px;
-                font-size: 18px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["accent_hover"]};
-            }}
-        """)
-        self.toggle_button.clicked.connect(self.toggle_playback)
-        button_layout.addWidget(self.toggle_button, stretch=2)
+        self.toggle_button.setMinimumHeight(44)
+        self.toggle_button.setMinimumWidth(140)
+        self._style_toggle(False)
+        self.toggle_button.clicked.connect(self._toggle_playback)
+        cl.addWidget(self.toggle_button)
 
         self.exit_button = QPushButton("Exit")
         self.exit_button.setCursor(Qt.PointingHandCursor)
-        self.exit_button.setMinimumHeight(60)
+        self.exit_button.setMinimumHeight(44)
+        self.exit_button.setMinimumWidth(90)
         self.exit_button.setStyleSheet(f"""
             QPushButton {{
-                background-color: {COLORS["bg_secondary"]};
-                color: {COLORS["text_secondary"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 10px;
-                padding: 16px 32px;
-                font-size: 18px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS["border"]};
-                color: {COLORS["text_primary"]};
-            }}
-        """)
-        self.exit_button.clicked.connect(self.exit_action)
-        button_layout.addWidget(self.exit_button, stretch=1)
-
-        control_layout.addWidget(button_row)
-        main_layout.addWidget(control_card)
-
-        # Footer
-        footer = QLabel(f"{self.controller.broadcast_address}:{self.controller.port}")
-        footer.setAlignment(Qt.AlignCenter)
-        footer.setStyleSheet(f"""
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 11px;
-            color: {COLORS["text_secondary"]};
-            padding: 8px;
-            border: none;
-            background: transparent;
-        """)
-        main_layout.addWidget(footer)
-
-        # Store device labels
-        self.device_labels = {}
-
-    def _create_stat_card(self, value, label, color):
-        """Create a stat card widget"""
-        card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS["bg_card"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-            }}
-        """)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(2)
-
-        value_label = QLabel(value)
-        value_label.setObjectName("value")
-        value_label.setStyleSheet(f"""
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 18px;
-            font-weight: bold;
-            color: {color};
-            border: none;
-            background: transparent;
-        """)
-        layout.addWidget(value_label)
-
-        text_label = QLabel(label)
-        text_label.setStyleSheet(f"""
-            font-size: 10px;
-            color: {COLORS["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border: none;
-            background: transparent;
-        """)
-        layout.addWidget(text_label)
-
-        return card
-
-    def _create_broadcast_card(self):
-        """Create broadcast display card"""
-        card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS["bg_card"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-            }}
-        """)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(2)
-
-        self.broadcast_value = QLabel("0")
-        self.broadcast_value.setObjectName("broadcast_value")
-        self.broadcast_value.setStyleSheet(f"""
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 18px;
-            font-weight: bold;
-            color: {COLORS["text_primary"]};
-            border: none;
-            background: transparent;
-        """)
-        layout.addWidget(self.broadcast_value)
-
-        label = QLabel("BROADCAST")
-        label.setStyleSheet(f"""
-            font-size: 10px;
-            color: {COLORS["text_secondary"]};
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border: none;
-            background: transparent;
-        """)
-        layout.addWidget(label)
-
-        return card
-
-    def _create_device_row(self, device_id, ip, status, last_seen):
-        """Create a compact device row widget"""
-        row = QFrame()
-        is_connected = status == "Connected"
-        
-        import re
-        display_name = re.sub(r'(\D+)(\d+)', r'\1 \2', device_id).title()
-        
-        row.setStyleSheet(f"""
-            QFrame {{
                 background-color: transparent;
-                border-bottom: 1px solid {COLORS["border"]};
+                color: {DIM};
+                border: 1px solid {DIM};
+                border-radius: 8px;
+                padding: 8px 20px; font-size: 15px;
             }}
-            QFrame:hover {{
-                background-color: rgba(255, 255, 255, 0.02);
+            QPushButton:hover {{ color: {TEXT}; border-color: {TEXT}; }}
+        """)
+        self.exit_button.clicked.connect(self._exit_action)
+        cl.addWidget(self.exit_button)
+
+        root.addWidget(controls)
+
+    def _style_toggle(self, running):
+        bg = DANGER if running else ACCENT
+        hover = DANGER_H if running else ACCENT_H
+        self.toggle_button.setText("Stop" if running else "Start")
+        self.toggle_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg}; color: white; border: none;
+                border-radius: 8px; padding: 8px 20px;
+                font-size: 16px; font-weight: bold;
             }}
+            QPushButton:hover {{ background-color: {hover}; }}
         """)
-        
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(12, 6, 12, 6)  # Reduced from 18,12,18,12
-        layout.setSpacing(10)  # Reduced from 12
 
-        # Icon - smaller
-        icon = QLabel("  ")
-        icon.setFixedSize(28, 28)  # Reduced from 36x36
-        icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet(f"""
-            background-color: {COLORS["bg_secondary"]};
-            border: none;
-            border-radius: 6px;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 10px;
-            font-weight: bold;
-            color: {COLORS["text_secondary"]};
-        """)
-        layout.addWidget(icon)
+    def _setup_timers(self):
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._update_ui)
+        self.update_timer.start(33)  # ~30 Hz
 
-        # Info - inline layout for compactness
-        info = QWidget()
-        info_layout = QHBoxLayout(info)  # Changed to horizontal
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(8)
-
-        name = QLabel(display_name)
-        name.setStyleSheet(f"""
-            font-size: 15px;
-            font-weight: 500;
-            color: {COLORS["text_primary"]};
-            border: none;
-            background: transparent;
-        """)
-        info_layout.addWidget(name)
-
-        ip_label = QLabel(f"({ip})")
-        ip_label.setStyleSheet(f"""
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 11px;
-            color: {COLORS["text_secondary"]};
-            border: none;
-            background: transparent;
-        """)
-        info_layout.addWidget(ip_label)
-        layout.addWidget(info)
-
-        layout.addStretch()
-
-        # Status - more compact
-        status_widget = QWidget()
-        status_layout = QHBoxLayout(status_widget)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(6)
-
-        dot = QLabel()
-        dot.setFixedSize(6, 6)  # Reduced from 8x8
-        dot_color = COLORS["accent"] if is_connected else COLORS["danger"]
-        dot.setStyleSheet(f"""
-            background-color: {dot_color};
-            border: none;
-            border-radius: 3px;
-        """)
-        status_layout.addWidget(dot)
-
-        time_label = QLabel(last_seen)
-        time_label.setStyleSheet(f"""
-            font-size: 10px;
-            color: {COLORS["text_secondary"]};
-            border: none;
-            background: transparent;
-        """)
-        status_layout.addWidget(time_label)
-        layout.addWidget(status_widget)
-
-        return row
-
-    def setup_timers(self):
-        # UI refresh timer
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_ui)
-        self.update_timer.start(50)
-
-        # Time broadcast timer
-        self.broadcast_timer = QTimer()
+        self.broadcast_timer = QTimer(self)
         self.broadcast_timer.timeout.connect(self.controller.broadcast_time)
         self.broadcast_timer.start(1000)
 
-    def on_input_changed(self):
-        """Validate input when changed"""
-        try:
-            value = int(self.time_input.text())
-            value = max(0, value)
-            self.time_input.setText(str(value))
-        except ValueError:
-            self.time_input.setText("0")
-
-    def toggle_playback(self):
-        """Toggle between start and stop"""
-        if self.controller.isRunning:
-            self.controller.stop_function(self)
-        else:
-            self.controller.start_function(self)
-
+    # ---- callbacks the Controller calls back into ----
     def update_toggle_button(self, running):
-        """Update button appearance based on state"""
-        if running:
-            self.toggle_button.setText("Stop")
-            self.toggle_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {COLORS["danger"]};
-                    color: white;
-                    border: none;
-                    border-radius: 10px;
-                    padding: 16px 32px;
-                    font-size: 18px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{
-                    background-color: #dc2626;
-                }}
-            """)
-        else:
-            self.toggle_button.setText("Start")
-            self.toggle_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {COLORS["accent"]};
-                    color: white;
-                    border: none;
-                    border-radius: 10px;
-                    padding: 16px 32px;
-                    font-size: 18px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{
-                    background-color: {COLORS["accent_hover"]};
-                }}
-            """)
-
-    def set_time_value(self, seconds):
-        """Set the time input to a specific value"""
-        seconds = int(max(0, seconds))
-        self.time_input.setText(str(seconds))
+        self._style_toggle(running)
 
     def get_time_value(self):
-        """Get current time value from input"""
         try:
             return int(self.time_input.text())
         except ValueError:
             return 0
 
-    def update_ui(self):
-        """Update UI with current state from controller"""
-        import time as time_module
-        
-        # Update broadcast value
-        msg = self.controller.current_broadcast_message
-        self.broadcast_value.setText(msg if msg else "0")
+    def set_time_value(self, seconds):
+        self.time_input.setText(str(int(max(0, seconds))))
 
-        current_time = time_module.time()
-        
-        # Clear old device rows (keep the stretch at the end)
-        while self.device_layout.count() > 1:
-            item = self.device_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+    # ---- UI handlers ----
+    def _on_input_changed(self):
+        try:
+            v = max(0, int(self.time_input.text()))
+            self.time_input.setText(str(v))
+        except ValueError:
+            self.time_input.setText("0")
 
-        # Create device rows
-        for ip, device in self.controller.devices.items():
-            if device.last_response_time and current_time - device.last_response_time > 2:
-                device.status = "Disconnected"
+    def _toggle_playback(self):
+        if self.controller.isRunning:
+            self.controller.stop_function(self)
+        else:
+            self.controller.start_function(self)
 
-            last_seen = (
-                f"{current_time - device.last_response_time:.1f}s ago"
-                if device.last_response_time
-                else "Never"
-            )
-            
-            row = self._create_device_row(
-                device.device_id, 
-                device.ip, 
-                device.status, 
-                last_seen
-            )
-            self.device_layout.insertWidget(self.device_layout.count() - 1, row)
-
-        # Update stats
-        total = len(self.controller.devices)
-        disconnected = sum(1 for d in self.controller.devices.values() if d.status == "Disconnected")
-        connected = total - disconnected
-
-        # Update stat card values
-        self.connected_label.findChild(QLabel, "value").setText(str(connected))
-        self.disconnected_label.findChild(QLabel, "value").setText(str(disconnected))
-        self.total_label.findChild(QLabel, "value").setText(str(total))
-
-    def exit_action(self):
+    def _exit_action(self):
         self.controller.exit_event.set()
         self.close()
 
     def closeEvent(self, event):
         self.controller.exit_event.set()
         event.accept()
+
+    # ---- per-tick refresh ----
+    def _update_ui(self):
+        msg = self.controller.current_broadcast_message
+        self.broadcast_label.setText(msg if msg else "0")
+
+        now = time_module.time()
+        online_indices = set()
+        for device in self.controller.devices.values():
+            if device.last_response_time and now - device.last_response_time > 2:
+                device.status = "Disconnected"
+            if device.status == "Connected":
+                idx = parse_player_index(device.device_id)
+                if idx is not None:
+                    online_indices.add(idx)
+
+        if self.dancers and self.players is not None:
+            ticks = self.time_provider()
+            for i, w in enumerate(self.dancers):
+                w.set_online(i in online_indices)
+                w.set_colors(self.players[i].colors_at(ticks))
