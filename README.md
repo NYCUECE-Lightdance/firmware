@@ -7,7 +7,7 @@ and previews each dancer's lights in a Qt window.
 ## Files
 
 - `control3.py` — main controller + UI entry point.
-- `fetch_lightdata.py` — downloads the show data and caches it to `lightdata.npz`.
+- `fetch_lightdata.py` — downloads the show data for `control3.py` and caches it to `lightdata.npz`.
 - `ui.py` — Qt window / dancer-figure widgets.
 - `2026_show.mp3` — bundled music track.
 - `main.cpp` — Pico 2W firmware for costume units (LED body parts).
