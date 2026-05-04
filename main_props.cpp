@@ -21,7 +21,7 @@
 //
 // DIP4 (GP20) is read only when DIP2 is high (i.e. WiFi is needed):
 //   high -> profile 0 (SSID "EE219B",     DHCP)
-//   low  -> profile 1 (SSID "Lightdance", static IP 192.168.1.{100+PLAYER_NUM})
+//   low  -> profile 1 (SSID "Lightdance", static IP 192.168.1.{152+PLAYER_NUM})
 //
 // Pin map (from the prop board schematic):
 //   GP2/3/4 : PROP1/2/3 WS2812 data (one chain per prop) -> strips 0/1/2
@@ -142,7 +142,7 @@ void msg(const String& s) {
 
 void connectWiFi(int p) {
     msg("WiFi: " + String(WIFI_SSID[p]));
-    if (p == 1) WiFi.config(IPAddress(192, 168, 1, 100 + PLAYER_NUM));
+    if (p == 1) WiFi.config(IPAddress(192, 168, 1, 152 + PLAYER_NUM));
     WiFi.begin(WIFI_SSID[p], WIFI_PASS);
 
     for (int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {

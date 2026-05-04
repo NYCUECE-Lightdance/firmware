@@ -27,12 +27,23 @@ PART_NAMES = ["hat", "face", "chestL", "chestR", "armL", "armR", "tie",
               "belt", "gloveL", "gloveR", "legL", "legR", "shoeL", "shoeR",
               "board"]
 
+# PLAYER_NUM values in main_props.cpp; index N here -> dancer N+1.
+PROP_PLAYERS = [2, 3, 4, 5]
+
 
 def parse_player_index(device_id):
     """'player3' -> 3. Returns None on anything else."""
     if not device_id:
         return None
     m = re.match(r"player(\d+)$", device_id.strip())
+    return int(m.group(1)) if m else None
+
+
+def parse_prop_index(device_id):
+    """'prop_p3' -> 3. Returns None on anything else."""
+    if not device_id:
+        return None
+    m = re.match(r"prop_p(\d+)$", device_id.strip())
     return int(m.group(1)) if m else None
 
 
@@ -131,6 +142,40 @@ class DancerWidget(QWidget):
 
 
 # ============================================================
+# PROP STATUS — name + connection dot, one per prop player
+# ============================================================
+class PropWidget(QWidget):
+    def __init__(self, player_num):
+        super().__init__()
+        self.player_num = player_num
+        self.online = False
+        self.setFixedSize(110, 32)
+
+    def set_online(self, online):
+        if online != self.online:
+            self.online = online
+            self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(SURFACE))
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(ACCENT if self.online else DANGER)))
+        p.drawEllipse(QPointF(14, self.height() / 2), 4, 4)
+
+        p.setPen(QColor(TEXT if self.online else DIM))
+        f = QFont()
+        f.setPointSize(9)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(28, 0, self.width() - 32, self.height(),
+                   Qt.AlignVCenter | Qt.AlignLeft,
+                   f"Prop p{self.player_num}")
+
+
+# ============================================================
 # MAIN WINDOW
 # ============================================================
 class MonitorWindow(QMainWindow):
@@ -140,6 +185,7 @@ class MonitorWindow(QMainWindow):
         self.players = players
         self.time_provider = time_provider
         self.dancers = []
+        self.props = {}  # player_num -> PropWidget
 
         self._init_ui()
         self._setup_timers()
@@ -181,7 +227,20 @@ class MonitorWindow(QMainWindow):
                 grid.addWidget(w, i // cols, i % cols)
             root.addWidget(grid_host, stretch=1)
 
-        root.addSpacing(80)
+        # prop status row, one indicator per known prop player
+        prop_host = QWidget()
+        prop_row = QHBoxLayout(prop_host)
+        prop_row.setContentsMargins(0, 0, 0, 0)
+        prop_row.setSpacing(8)
+        prop_row.addStretch()
+        for pn in PROP_PLAYERS:
+            w = PropWidget(pn)
+            self.props[pn] = w
+            prop_row.addWidget(w)
+        prop_row.addStretch()
+        root.addWidget(prop_host)
+
+        root.addSpacing(40)
 
         # bottom controls: [broadcast] ... [input] seconds [Start] [Exit]
         controls = QWidget()
@@ -308,6 +367,7 @@ class MonitorWindow(QMainWindow):
 
         now = time_module.time()
         online_indices = set()
+        online_props = set()
         for device in self.controller.devices.values():
             if device.last_response_time and now - device.last_response_time > 2:
                 device.status = "Disconnected"
@@ -315,9 +375,16 @@ class MonitorWindow(QMainWindow):
                 idx = parse_player_index(device.device_id)
                 if idx is not None:
                     online_indices.add(idx)
+                    continue
+                pidx = parse_prop_index(device.device_id)
+                if pidx is not None:
+                    online_props.add(pidx)
 
         if self.dancers and self.players is not None:
             ticks = self.time_provider()
             for i, w in enumerate(self.dancers):
                 w.set_online(i in online_indices)
                 w.set_colors(self.players[i].colors_at(ticks))
+
+        for pn, w in self.props.items():
+            w.set_online(pn in online_props)
