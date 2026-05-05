@@ -73,30 +73,26 @@ const char* RESPOND_TO[] = {"192.168.0.137", "192.168.1.10"};
 // STRIP_LENS[i] is the LED count for strip i (must cover every section's range).
 struct Section { uint8_t strip, start, count, slot; };
 
-#if PLAYER_NUM == 2
+#if PLAYER_NUM == 2 || PLAYER_NUM == 3
+//  (acc0..1), on strip 0, 1.
+const Section SECTIONS[] = {
+    {0, 0, 2, 0}, {1, 0, 3, 1},
+};
+const uint8_t STRIP_LENS[3] = {2, 3, 0};
+
+#elif PLAYER_NUM == 4
 // Dancer 3: 2 props on rope (acc0..1), all on strip 0.
 const Section SECTIONS[] = {
-    {0, 0, 1, 0}, {0, 1, 1, 1},
+    {0, 0, 5, 0}, {1, 0, 5, 1},
 };
-const uint8_t STRIP_LENS[3] = {2, 0, 0};
+const uint8_t STRIP_LENS[3] = {5, 5, 0};
 
-#elif PLAYER_NUM == 3
-// Dancer 4: blade=acc0..3 (strip 0), handle=acc4..5 (strip 1), hilt=acc6..7 (strip 2).
+#elif PLAYER_NUM == 5
+// Dancer 3: 2 props on rope (acc0..1), all on strip 0.
 const Section SECTIONS[] = {
-    {0, 0, 1, 0}, {0, 1, 1, 1}, {0, 2, 1, 2}, {0, 3, 1, 3},
-    {1, 0, 1, 4}, {1, 1, 1, 5},
-    {2, 0, 1, 6}, {2, 1, 1, 7},
+    {0, 0, 2, 0}, {1, 0, 5, 1}, {2, 0, 5, 2},
 };
-const uint8_t STRIP_LENS[3] = {4, 2, 2};
-
-#elif PLAYER_NUM == 4 || PLAYER_NUM == 5
-// Dancers 5 & 6: blade=acc0..1, handle=acc2..3, hilt=acc4.
-const Section SECTIONS[] = {
-    {0, 0, 1, 0}, {0, 1, 1, 1},
-    {1, 0, 1, 2}, {1, 1, 1, 3},
-    {2, 0, 1, 4},
-};
-const uint8_t STRIP_LENS[3] = {2, 2, 1};
+const uint8_t STRIP_LENS[3] = {2, 5, 5};
 
 #else
 #error "Define a SECTIONS table for this PLAYER_NUM in main_props.cpp."
@@ -105,7 +101,7 @@ const uint8_t STRIP_LENS[3] = {2, 2, 1};
 // Per-strip LED buffers. Sized to the largest count any player needs, so the
 // same firmware can be reflashed across players without resizing buffers.
 // FastLED uses STRIP_LENS at addLeds() time to set the actual chain length.
-#define MAX_LEDS_PER_STRIP 8
+#define MAX_LEDS_PER_STRIP 20
 CRGB l0[MAX_LEDS_PER_STRIP], l1[MAX_LEDS_PER_STRIP], l2[MAX_LEDS_PER_STRIP];
 CRGB* strips[] = {l0, l1, l2};
 CRGB ind[IND_COUNT];
