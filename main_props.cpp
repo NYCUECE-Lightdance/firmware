@@ -1,32 +1,34 @@
 // Prop controller for Pico 2W.
 //
-// Frame data uses only `time` and `acc0`..`acc7`. A per-player SECTIONS table
-// maps ranges of each prop strip to one acc slot, exactly the way main.cpp
-// maps body-part columns onto WS2812 strips.
+// Frame data uses `time` + `acc0`..`acc7`; a per-player SECTIONS table maps
+// each acc slot onto a range of LEDs.
 //
-// Each prop carries its own WS2812 chain wired to GP2/3/4 (PROP1/2/3).
-// The onboard 3-LED WS2812 chain on GP9 is unused.
+// Pins:
+//   GP2/3/4 : PROP1/2/3 WS2812 strips
+//   GP9     : 3-LED WS2812 status indicator
+//   GP17-20 : DIP1..DIP4 (active low)
+//   onboard : CYW43 LED (WiFi connect indicator)
 //
-// Boot flow:
+// Boot:
 //   1. read DIPs
-//   2. connect WiFi (skipped if DIP2 low so unit lights up offline)
+//   2. WiFi connect (skipped if DIP2 low). WiFi must init before FastLED
+//      -- both fight for PIO state machines.
 //   3. init FastLED + LittleFS
-//   4. branch on switches:
-//        DIP2 (GP18) low  -> show test colors per acc slot and halt
-//        DIP2 (GP18) high -> normal boot, continue below
-//        DIP1 (GP17) low  -> load saved animation from flash, enter run loop
-//        DIP1 (GP17) high -> download fresh data from server, save, halt
-//                            (power-cycle with DIP1 low to play it back)
-//   5. run loop: listen on UDP, play back frames synced to host timestamps.
+//   4. mode select:
+//        DIP2 low           -> debug colors, halt
+//        DIP1 high          -> download from server, save, halt
+//        DIP1 low (default) -> load from flash, enter run loop
+//   5. loop: UDP cmds drive playback synced to host timestamps.
 //
-// DIP4 (GP20) is read only when DIP2 is high (i.e. WiFi is needed):
-//   high -> profile 0 (SSID "EE219B",     DHCP)
-//   low  -> profile 1 (SSID "Lightdance", static IP 192.168.1.{152+PLAYER_NUM})
+// DIP4 picks WiFi profile (high=EE219B/DHCP, low=Lightdance/static).
 //
-// Pin map (from the prop board schematic):
-//   GP2/3/4 : PROP1/2/3 WS2812 data (one chain per prop) -> strips 0/1/2
-//   GP15    : Btn1 (unused)
-//   GP17-20 : DIP1..DIP4 (active low, INPUT_PULLUP)
+// Indicator (GP9):
+//   downloading  : chunk# in base-4 across ind[0..2] (0=R,1=G,2=B,3=W),
+//                  leading zeros blank
+//   download ok  : all 3 blink green
+//   download err : all 3 blink red
+//   ready / idle : ind[0] solid green
+//   playing      : ind[0] breathing green
 
 #include <ArduinoJson.h>
 #include <FastLED.h>
@@ -42,6 +44,8 @@
 #define PROP1_PIN      2
 #define PROP2_PIN      3
 #define PROP3_PIN      4
+#define IND_PIN        9   // onboard 3-LED WS2812 chain (status indicator)
+#define IND_COUNT      3
 #define DIP1_PIN       17  // low = load from flash & run             | high = download & halt
 #define DIP2_PIN       18  // low = debug mode (offline test colors)  | high = normal boot
 #define DIP3_PIN       19  // reserved
@@ -104,6 +108,7 @@ const uint8_t STRIP_LENS[3] = {2, 2, 1};
 #define MAX_LEDS_PER_STRIP 8
 CRGB l0[MAX_LEDS_PER_STRIP], l1[MAX_LEDS_PER_STRIP], l2[MAX_LEDS_PER_STRIP];
 CRGB* strips[] = {l0, l1, l2};
+CRGB ind[IND_COUNT];
 
 // Animation data. frames[i][0] = start tick (50ms units),
 // frames[i][1..8] = packed acc0..acc7 with this bit layout:
@@ -145,16 +150,23 @@ void connectWiFi(int p) {
     if (p == 1) WiFi.config(IPAddress(192, 168, 1, 152 + PLAYER_NUM));
     WiFi.begin(WIFI_SSID[p], WIFI_PASS);
 
+    // LED_BUILTIN routes through CYW43, so it is only controllable after
+    // WiFi.begin() brings the wireless chip up.
+    pinMode(LED_BUILTIN, OUTPUT);
+
     for (int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
+        digitalWrite(LED_BUILTIN, i & 1);
         delay(500);
     }
 
     if (WiFi.status() != WL_CONNECTED) {
+        digitalWrite(LED_BUILTIN, LOW);
         msg("WiFi failed");
         delay(2000);
         reboot();
     }
 
+    digitalWrite(LED_BUILTIN, HIGH);
     msg("Connected " + WiFi.localIP().toString());
 }
 
@@ -263,6 +275,40 @@ void renderFrame() {
     while (1) delay(1000);
 }
 
+[[noreturn]] void haltBlinking(const String& s, uint32_t color) {
+    msg(s);
+    bool on = false;
+    while (1) {
+        on = !on;
+        for (int i = 0; i < IND_COUNT; i++) ind[i] = on ? CRGB(color) : CRGB::Black;
+        FastLED.show();
+        delay(500);
+    }
+}
+
+// Display n on the 3 indicator LEDs as 3 base-4 digits.
+// Per-digit color: 0=red, 1=green, 2=blue, 3=white. Leading zeros are blanked
+// (LED off) so e.g. n=5 shows [off, green, green] instead of [red, green, green].
+// LED order: ind[0]=MSD, ind[2]=LSD.
+void showChunkNumber(int n) {
+    static const uint32_t COLORS[4] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFFFF};
+    uint8_t d[3] = {
+        uint8_t((n >> 4) & 3),
+        uint8_t((n >> 2) & 3),
+        uint8_t(n & 3),
+    };
+
+    int firstSig = 2;  // n==0 still shows the LSD
+    for (int i = 0; i < 3; i++) {
+        if (d[i]) { firstSig = i; break; }
+    }
+
+    for (int i = 0; i < IND_COUNT; i++) {
+        ind[i] = (i < firstSig) ? CRGB::Black : CRGB(COLORS[d[i]]);
+    }
+    FastLED.show();
+}
+
 int readUDP() {
     if (!udp.parsePacket()) return 0;
     lastBeatMs = millis();
@@ -314,6 +360,7 @@ void setup() {
     if (STRIP_LENS[0]) FastLED.addLeds<NEOPIXEL, PROP1_PIN>(strips[0], STRIP_LENS[0]);
     if (STRIP_LENS[1]) FastLED.addLeds<NEOPIXEL, PROP2_PIN>(strips[1], STRIP_LENS[1]);
     if (STRIP_LENS[2]) FastLED.addLeds<NEOPIXEL, PROP3_PIN>(strips[2], STRIP_LENS[2]);
+    FastLED.addLeds<NEOPIXEL, IND_PIN>(ind, IND_COUNT);
     FastLED.setBrightness(255);
     FastLED.clear(true);
 
@@ -335,15 +382,16 @@ void setup() {
         httpsClient.setInsecure();  // server cert not validated
         http.setReuse(true);        // keep TCP/TLS alive across chunk requests
         for (int c = 0; c < NUM_CHUNKS; c++) {
+            showChunkNumber(c);
             bool ok = false;
             for (int a = 0; a < 3 && !(ok = downloadChunk(c)); a++) {
                 msg("Retry " + String(a + 1) + "/3 chunk " + String(c));
             }
-            if (!ok) halt("Download failed");
+            if (!ok) haltBlinking("Download failed", 0xFF0000);
             msg("Chunk " + String(c));
         }
         saveData();
-        halt("Download success");
+        haltBlinking("Download success", 0x00FF00);
     }
 
     udp.begin(UDP_RX_PORT);
@@ -376,12 +424,16 @@ void loop() {
             delay(500);
             reboot();
         }
+        ind[0] = CRGB::Green;
+        FastLED.show();
     } else {
         // current playback time in 50ms ticks
         int cur = (millis() - startMs) / 50;
         while (frameIdx + 1 < numFrames && frames[frameIdx + 1][0] < (uint32_t)cur) {
             frameIdx++;
         }
+        // breathing green: ~2s period via 8-bit sine LUT
+        ind[0] = CRGB(0, sin8((millis() >> 3) & 0xFF), 0);
         renderFrame();
     }
 
