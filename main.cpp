@@ -304,8 +304,8 @@ void setup() {
     // Template arg is the data GPIO (must be a literal). Length must match
     // the buffer size declared at file scope. Order here = strip index in SECTIONS.
     FastLED.addLeds<NEOPIXEL, 2>(strips[0], 6);
-    FastLED.addLeds<NEOPIXEL, 3>(strips[1], 8);
-    FastLED.addLeds<NEOPIXEL, 4>(strips[2], 8);
+    FastLED.addLeds<NEOPIXEL, 3>(strips[1], 12);
+    FastLED.addLeds<NEOPIXEL, 4>(strips[2], 12);
     FastLED.addLeds<NEOPIXEL, 5>(strips[3], 1);
     FastLED.addLeds<NEOPIXEL, 6>(strips[4], 3);
     FastLED.addLeds<NEOPIXEL, 7>(strips[5], 3);
