@@ -30,6 +30,10 @@ PART_NAMES = ["hat", "face", "chestL", "chestR", "armL", "armR", "tie",
 # PLAYER_NUM values in main_props.cpp; index N here -> dancer N+1.
 PROP_PLAYERS = [3, 4, 5, 7]
 
+# Firmware PLAYER_NUM for each main dancer, in the same order as lightdata.npz
+# player_0..player_N. UI label for a slot = MAIN_PLAYERS[i] + 1.
+MAIN_PLAYERS = [2, 3, 4, 6]
+
 
 def parse_player_index(device_id):
     """'player3' -> 3. Returns None on anything else."""
@@ -51,9 +55,10 @@ def parse_prop_index(device_id):
 # DANCER WIDGET — paints one figure with per-part colors
 # ============================================================
 class DancerWidget(QWidget):
-    def __init__(self, index):
+    def __init__(self, index, label_num):
         super().__init__()
         self.index = index
+        self.label_num = label_num
         self.colors = {n: (0, 0, 0) for n in PART_NAMES}
         self.online = False
         self.setFixedSize(170, 290)
@@ -83,7 +88,7 @@ class DancerWidget(QWidget):
         f.setBold(True)
         p.setFont(f)
         p.drawText(0, 4, self.width(), 16, Qt.AlignCenter,
-                   f"Dancer {self.index + 1}")
+                   f"Dancer {self.label_num}")
 
         # SVG-like figure (viewBox 10 0 222 360, group translate 0,35)
         vb_x, vb_y, vb_w, vb_h = 10, 0, 222, 360
@@ -207,7 +212,8 @@ class MonitorWindow(QMainWindow):
         root.addSpacing(40)
 
         # dancer grid (or fallback message if no light data)
-        n = len(self.players) if self.players is not None else 0
+        avail = len(self.players) if self.players is not None else 0
+        n = min(avail, len(MAIN_PLAYERS))
         if n == 0:
             warn = QLabel("lightdata.npz not found.\n"
                           "Run: python fetch_lightdata.py")
@@ -222,7 +228,7 @@ class MonitorWindow(QMainWindow):
             grid.setSpacing(8)
             cols = 7 if n > 7 else max(n, 1)
             for i in range(n):
-                w = DancerWidget(i)
+                w = DancerWidget(i, MAIN_PLAYERS[i] + 1)
                 self.dancers.append(w)
                 grid.addWidget(w, i // cols, i % cols)
             root.addWidget(grid_host, stretch=1)
@@ -383,7 +389,7 @@ class MonitorWindow(QMainWindow):
         if self.dancers and self.players is not None:
             ticks = self.time_provider()
             for i, w in enumerate(self.dancers):
-                w.set_online(i in online_indices)
+                w.set_online(MAIN_PLAYERS[i] in online_indices)
                 w.set_colors(self.players[i].colors_at(ticks))
 
         for pn, w in self.props.items():
