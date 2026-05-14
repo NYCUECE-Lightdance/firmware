@@ -28,7 +28,7 @@ PART_NAMES = ["hat", "face", "chestL", "chestR", "armL", "armR", "tie",
               "board"]
 
 # PLAYER_NUM values in main_props.cpp; index N here -> dancer N+1.
-PROP_PLAYERS = [2, 3, 4, 5]
+PROP_PLAYERS = [3, 4, 5, 7]
 
 
 def parse_player_index(device_id):
