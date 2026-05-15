@@ -331,7 +331,15 @@ class MonitorWindow(QMainWindow):
 
     def get_time_value(self):
         try:
-            return int(self.time_input.text())
+            time_str_raw = self.time_input.text().strip()
+            if ":" in time_str_raw:
+                # if format MM:SS return MM*60 + SS
+                parts = time_str_raw.split(":")
+                if len(parts) == 2:
+                    minutes = float(parts[0]) if parts[0] else 0
+                    seconds = float(parts[1]) if parts[1] else 0
+                    return (minutes * 60) + seconds
+            return int(float(time_str_raw))
         except ValueError:
             return 0
 
@@ -341,7 +349,17 @@ class MonitorWindow(QMainWindow):
     # ---- UI handlers ----
     def _on_input_changed(self):
         try:
-            v = max(0, int(self.time_input.text()))
+            text = self.time_input.text().strip()
+            if ":" in text:
+                parts = text.split(":", 1)
+                if len(parts) == 2:
+                    minutes = int(parts[0]) if parts[0] else 0
+                    seconds = int(parts[1]) if parts[1] else 0
+                    v = max(0, minutes * 60 + seconds)
+                else:
+                    v = 0
+            else:
+                v = max(0, int(float(text)))
             self.time_input.setText(str(v))
         except ValueError:
             self.time_input.setText("0")
