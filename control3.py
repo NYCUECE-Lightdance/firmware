@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, QUrl, Signal
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtWidgets import QApplication
 
 from ui import MonitorWindow, PART_NAMES
@@ -125,6 +125,14 @@ class MusicPlayer(QObject):
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
+
+        # Route music to whatever Windows currently uses as the default
+        # output device, and keep following it when devices are plugged in,
+        # unplugged, or the default is changed.
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(self._sync_output_device)
+        self._sync_output_device()
+
         self.startTime = 0
         self._want_play = False
         self._fired_started = False
@@ -132,7 +140,18 @@ class MusicPlayer(QObject):
         self.player.playbackStateChanged.connect(self._on_playback_state)
         self.player.setSource(QUrl.fromLocalFile(file_path))
 
+    def _sync_output_device(self):
+        """Point the audio output at the current Windows default device."""
+        device = QMediaDevices.defaultAudioOutput()
+        if device.isNull():
+            return
+        if self.audio_output.device() != device:
+            self.audio_output.setDevice(device)
+            print(f"🔊 Audio output: {device.description()}")
+
     def play_music(self):
+        # Re-check in case the default changed while idle.
+        self._sync_output_device()
         self._want_play = True
         self._fired_started = False
         status = self.player.mediaStatus()
