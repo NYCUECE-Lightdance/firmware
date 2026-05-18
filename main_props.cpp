@@ -40,7 +40,7 @@
 #include "hardware/watchdog.h"
 
 // ---- config ----
-#define PLAYER_NUM     4  // selects which SECTIONS table below applies
+#define PLAYER_NUM     3  // selects which SECTIONS table below applies
 #define PROP1_PIN      2
 #define PROP2_PIN      3
 #define PROP3_PIN      4
@@ -91,12 +91,12 @@ const uint8_t STRIP_LENS[3] = {5, 3, 0};
 // big sword
 #elif PLAYER_NUM == 3
 const Section SECTIONS[] = {
-    {0, 0, 3, 0}, {1, 0, 3, 2}, {2, 0, 1, 1}
+    {0, 0, 3, 0}, {1, 0, 1, 2}, {1, 1, 1, 0}, {1, 2, 1, 2}, {2, 0, 2, 1}
 };
 const uint8_t STRIP_LENS[3] = {3, 3, 2};
 
 // umbrella
-#elif PLAYER_NUM == 2
+#elif PLAYER_NUM == 1
 const Section SECTIONS[] = {
     {0, 0, 4, 0}, {1, 0, 4, 0}, {2, 0, 2, 1},
 };

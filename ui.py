@@ -27,8 +27,8 @@ PART_NAMES = ["hat", "face", "chestL", "chestR", "armL", "armR", "tie",
               "belt", "gloveL", "gloveR", "legL", "legR", "shoeL", "shoeR",
               "board"]
 
-# UI labels for the prop boards. Firmware PLAYER_NUM 2/3/4/6 displays as 3/4/5/7.
-PROP_PLAYERS = [3, 4, 5, 7]
+# UI labels for the prop boards. Firmware PLAYER_NUM 1/3/4/6 displays as 2/4/5/7.
+PROP_PLAYERS = [2, 4, 5, 7]
 
 
 def parse_player_index(device_id):
